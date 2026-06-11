@@ -173,7 +173,9 @@ cache-ram = 2048
 
 [gemma-4-31b-it]
 model = ${AI_DIR}/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf
-ctx-size = 81920
+# 65536, not higher: the 17.4 GB weights + KV must leave GTT room for the
+# MTP draft model — 81920 overcommits the 20.6 GiB GTT and hangs on draft load.
+ctx-size = 65536
 batch-size = 2048
 ubatch-size = 512
 n-gpu-layers = 99
