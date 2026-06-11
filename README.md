@@ -38,40 +38,53 @@ win because only a few billion parameters are active per token.
 
 ## Models
 
-Nine GGUF models across three roles (all run locally, zero marginal cost):
+Nine GGUF models, all served locally at zero marginal cost, swapped on demand
+(one resident at a time). Quant choice is shaped by the GTT ceiling — and by the
+fact that MoE expert weights are often already low-bit (e.g. gpt-oss is natively
+MXFP4, so quantizing the experts further buys nothing).
 
-| Model | Arch | Role |
-|---|---|---|
-| `gpt-oss-20b` | MoE (OpenAI) | general + agentic / tool-use (**default**) |
-| `qwen3.6-35b-a3b` | MoE | general reasoning |
-| `qwen3.6-27b` | dense | general (reference) |
-| `gemma-4-26b-a4b-it` | MoE | general, fastest |
-| `gemma-4-12b-it` | dense | lightweight general |
-| `gemma-4-31b-it` | dense | general, largest dense |
-| `nemotron-3-nano-30b-a3b` | hybrid Mamba2-MoE | hard math / reasoning, long context |
-| `cyberpal-2.0-20b` | MoE (gpt-oss base) | defensive cybersecurity specialist |
-| `diffusiongemma-26b-a4b-it` | block-diffusion | experimental |
+| Model | Base / arch | Quant | Weights | Context | MTP draft | Role |
+|---|---|---|---:|---:|:---:|---|
+| `gpt-oss-20b` | OpenAI MoE (3.6B active) | Q8_0 | 11.3 GB | 65 536 | — | general + agentic / tool-use (**default**) |
+| `qwen3.6-35b-a3b` | Qwen MoE (~3B active) | UD-IQ4_NL | ~18 GB | 131 072 | ✓ | general reasoning |
+| `qwen3.6-27b` | Qwen dense | UD-Q4_K_XL | ~16 GB | 98 304 | ✓ | general (reference) |
+| `gemma-4-26b-a4b-it` | Gemma MoE (~4B active) | UD-Q4_K_XL (QAT) | ~14 GB | 131 072 | ✓ | general, **fastest** |
+| `gemma-4-12b-it` | Gemma dense | UD-Q4_K_XL (QAT) | 6.7 GB | 131 072 | ✓ | lightweight general (f16 KV) |
+| `gemma-4-31b-it` | Gemma dense | UD-Q4_K_XL (QAT) | 17.4 GB | 65 536 | ✓ | largest dense |
+| `nemotron-3-nano-30b-a3b` | NVIDIA hybrid Mamba2-MoE (3.5B active) | IQ4_NL | 16.9 GB | 65 536 | — | hard math / reasoning, long context |
+| `cyberpal-2.0-20b` | gpt-oss MoE, IBM CTI fine-tune | MXFP4_MOE | 11.3 GB | 8 192 | — | defensive cybersecurity specialist |
+| `diffusiongemma-26b-a4b-it` | Gemma block-diffusion | Q4_K_M | 15.7 GB | 8 192 | — | experimental (needs llama.cpp arch support) |
+
+Notes:
+- **MTP** = multi-token-prediction draft head (speculative decoding); ~55–65%
+  draft acceptance observed, worth ~1.5–2× throughput.
+- `gemma-4-31b-it` is capped at 65 536 context: its 17.4 GB weights + KV + the
+  MTP draft model must fit under the ~20.6 GiB GTT ceiling. Higher context
+  overcommits and the draft model fails to load.
+- `diffusiongemma` is wired up but block-diffusion is not yet in a released
+  llama.cpp; it loads once the arch lands upstream.
 
 ## Performance — generation speed
 
-Measured on the 780M (Vulkan), `max_tokens=300`, single request:
+Measured on the 780M (Vulkan), short single request:
 
 | Model | Arch | Active params | Gen t/s | Prompt t/s |
 |---|---|---:|---:|---:|
 | gemma-4-26b-a4b-it | MoE | ~4B | **31.7** | 60.9 |
-| nemotron-3-nano-30b-a3b | hybrid MoE | 3.5B | 29.4 | 21.5 |
+| nemotron-3-nano-30b-a3b | hybrid Mamba2-MoE | 3.5B | 29.4 | 21.5 |
 | gpt-oss-20b | MoE | 3.6B | 29.1 | 81.6 |
 | cyberpal-2.0-20b | MoE | 3.6B | 29.0 | 81.6 |
 | qwen3.6-35b-a3b | MoE | ~3B | 28.9 | 24.5 |
 | gemma-4-12b-it | dense | 12B | 21.2 | 47.2 |
-| gemma-4-31b-it | dense | 31B | 10.3 | 18.4 |
+| gemma-4-31b-it | dense | 31B | 10.2 | 18.4 |
 | qwen3.6-27b | dense | 27B | 8.2 | 9.4 |
 
 **Takeaway:** it's dense-vs-MoE, not size. The MoE models activate only ~3–4B
 params per token and run 3–4× faster than the dense models despite being larger in
-total. On a memory-bandwidth-bound iGPU, MoE wins decisively. MTP speculative
-decoding adds a further ~1.5–2× on models that ship a draft head (≈55–65% draft
-acceptance observed).
+total — `gemma-4-26b-a4b-it` (26B, ~4B active) hits 31.7 t/s while the dense
+`qwen3.6-27b` (27B) manages 8.2. On a memory-bandwidth-bound iGPU, MoE wins
+decisively. MTP speculative decoding adds a further ~1.5–2× on models that ship a
+draft head (≈55–65% draft acceptance observed).
 
 ## Performance — accuracy
 
@@ -93,8 +106,14 @@ instruction-following, and classic LLM traps (scored against known answers):
 competitive with a frontier cloud model on this battery, at zero cost. The
 security-specialist `cyberpal-2.0-20b` scores lower on **general** reasoning/math
 (it was fine-tuned narrowly for CTI/CVE classification) but is fast and strong in
-its domain. `gpt-oss-20b` is the best all-rounder: top accuracy, ~29 t/s, and
-native tool-use — hence the default.
+its domain — its C/CWE vulnerability analysis is accurate. `gpt-oss-20b` is the
+best all-rounder: top accuracy, ~29 t/s, and native tool-use — hence the default.
+
+This 37-question battery has a low ceiling (most models saturate it). For *hard*
+reasoning, `nemotron-3-nano-30b-a3b` is the standout — its published numbers
+(AIME25 89.1, GPQA 73.0, MMLU-Pro 78.3, RULER-100 @ 256k = 92.9) are well above
+the rest of the fleet, and its hybrid Mamba layers make long context cheap on KV.
+It isn't scored above because the battery doesn't probe that level of difficulty.
 
 ## Usage
 
