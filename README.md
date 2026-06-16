@@ -45,7 +45,7 @@ MXFP4, so quantizing the experts further buys nothing).
 
 | Model | Base / arch | Quant | Weights | Context | MTP draft | Role |
 |---|---|---|---:|---:|:---:|---|
-| `gpt-oss-20b` | OpenAI MoE (3.6B active) | Q8_0 | 11.3 GB | 65 536 | — | general + agentic / tool-use (**default**) |
+| `gpt-oss-20b` | OpenAI MoE (3.6B active) | Q8_0 | 11.3 GB | 131 072 | — | general + agentic / tool-use (**default**) |
 | `qwen3.6-35b-a3b` | Qwen MoE (~3B active) | UD-IQ4_NL | ~18 GB | 131 072 | ✓ | general reasoning |
 | `qwen3.6-27b` | Qwen dense | UD-Q4_K_XL | ~16 GB | 65 536 | ✓ | general (reference) |
 | `gemma-4-26b-a4b-it` | Gemma MoE (~4B active) | UD-Q4_K_XL (QAT) | ~14 GB | 131 072 | ✓ | general, **fastest** |

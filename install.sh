@@ -237,7 +237,7 @@ cache-ram = 1024
 
 [gpt-oss-20b]
 model = ${AI_DIR}/gpt-oss-20b-Q8_0.gguf
-ctx-size = 65536
+ctx-size = 131072
 batch-size = 2048
 ubatch-size = 512
 n-gpu-layers = 99
@@ -613,7 +613,7 @@ input_price = 0.0
 output_price = 0.0
 thinking = "high"
 supports_images = false
-auto_compact_threshold = 65536
+auto_compact_threshold = 131072
 
 [[models]]
 name = "nemotron-3-nano-30b-a3b"
