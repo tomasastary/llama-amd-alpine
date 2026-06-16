@@ -112,7 +112,10 @@ version = 1
 
 [qwen3.6-27b]
 model = ${AI_DIR}/Qwen3.6-27B-UD-Q4_K_XL.gguf
-ctx-size = 98304
+# 65536, not higher: at 98304 the dense 27B weights + KV + MTP draft overcommit
+# the 22 GB box and hang on slot init (never reaches launch_slot_). Same class of
+# overcommit documented for gemma-4-31b-it below.
+ctx-size = 65536
 batch-size = 2048
 ubatch-size = 512
 n-gpu-layers = 99
