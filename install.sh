@@ -90,7 +90,6 @@ wget -P "${AI_DIR}" "https://huggingface.co/unsloth/gemma-4-31B-it-qat-GGUF/reso
 wget -P "${AI_DIR}" "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/mtp-gemma-4-12b-it.gguf"
 wget -P "${AI_DIR}" "https://huggingface.co/unsloth/gemma-4-12B-it-qat-GGUF/resolve/main/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
 wget -P "${AI_DIR}" "https://huggingface.co/unsloth/gemma-4-31B-it-qat-GGUF/resolve/main/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf"
-wget -P "${AI_DIR}" "https://huggingface.co/unsloth/diffusiongemma-26B-A4B-it-GGUF/resolve/main/diffusiongemma-26B-A4B-it-Q4_K_M.gguf"
 wget -P "${AI_DIR}" "https://huggingface.co/mradermacher/CyberPal2.0-20B-i1-GGUF/resolve/main/CyberPal2.0-20B.i1-MXFP4_MOE.gguf"
 wget -P "${AI_DIR}" "https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q8_0.gguf"
 wget -P "${AI_DIR}" "https://huggingface.co/unsloth/Nemotron-3-Nano-30B-A3B-GGUF/resolve/main/Nemotron-3-Nano-30B-A3B-IQ4_NL.gguf"
@@ -106,8 +105,8 @@ version = 1
 # (--models-preset --models-max --api-key --host --port); every model-instance
 # flag (n-gpu-layers, context-shift, swa-checkpoints, kv-unified, cache-reuse,
 # chat-template-kwargs) lives here so each model can be tuned individually.
-# Hybrid (Nemotron) and diffusion (diffusiongemma) models opt OUT of
-# context-shift / swa-checkpoints, which break recurrent / block-decode memory.
+# Hybrid (Nemotron) models opt OUT of context-shift / swa-checkpoints, which
+# break recurrent memory.
 # ============================================================================
 
 [qwen3.6-27b]
@@ -268,17 +267,6 @@ parallel = 1
 jinja = true
 flash-attn = true
 cache-ram = 2048
-
-# Block-diffusion: no autoregressive context-shift / checkpoints
-[diffusiongemma-26b-a4b-it]
-model = ${AI_DIR}/diffusiongemma-26B-A4B-it-Q4_K_M.gguf
-ctx-size = 8192
-batch-size = 2048
-ubatch-size = 512
-n-gpu-layers = 99
-parallel = 1
-jinja = true
-cache-ram = 512
 MODELS_EOF
 
 echo "Vytváram OpenRC službu..."
@@ -604,17 +592,6 @@ output_price = 0.0
 thinking = "high"
 supports_images = true
 auto_compact_threshold = 81920
-
-[[models]]
-name = "diffusiongemma-26b-a4b-it"
-provider = "llamacpp"
-alias = "diffusiongemma-26b-a4b-it"
-temperature = 0.2
-input_price = 0.0
-output_price = 0.0
-thinking = "none"
-supports_images = false
-auto_compact_threshold = 8192
 
 [[models]]
 name = "cyberpal-2.0-20b"
