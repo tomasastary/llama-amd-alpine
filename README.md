@@ -116,6 +116,37 @@ reasoning, `nemotron-3-nano-30b-a3b` is the standout — its published numbers
 the rest of the fleet, and its hybrid Mamba layers make long context cheap on KV.
 It isn't scored above because the battery doesn't probe that level of difficulty.
 
+## Model selection — published benchmarks & role fit
+
+Vendor-reported scores (**directional only** — different vendors, benchmark
+versions and years, so not strictly head-to-head), paired with the **local
+generation speed** measured above. `MiniMax-M3` is the paid cloud reference used
+for escalation / hardest tasks.
+
+| Model | Active | GPQA‑D | AIME | Coding | Local t/s | Vision | Best role |
+|---|---|---:|---:|---:|---:|:---:|---|
+| *MiniMax‑M3 (cloud)* | — | *92.9* | — | *idx 43* | *cloud* | — | paid reference / hardest tasks |
+| gemma‑4‑26b‑a4b | ~3.8B | 82.3 | ~88 | 77.1 (LCB) | 35.9 | ✓ | fast daily driver (+vision) |
+| qwen3.6‑35b‑a3b | ~3B | 86.0 | 92.7 | 73.4 (SWE‑V) | 33.5 | ✓ | best speed/quality reasoning + code |
+| nemotron‑3‑nano‑30b‑a3b | ~3.5B | 73.0 | 89.1 | 68.3 (LCB) | 29.5 | — | hard math + long context (256k) |
+| gpt‑oss‑20b | 3.6B | 71.5 | 91.7 | 60.7 (SWE‑V) | 28.9 | — | default; agentic / tool‑use |
+| cyberpal‑2.0‑20b | 3.6B | — | — | — | 28.8 | — | defensive security (CVE/CWE) |
+| gemma‑4‑12b | 12B | — | — | — | 22.8 | ✓ | lightweight general (+vision) |
+| gemma‑4‑31b | 31B | 84.3 | 89.2 | 80.0 (LCB) | 12.1 | ✓ | strongest dense (slow) |
+| qwen3.6‑27b | 27B | 87.8 | — | 77.2 (SWE‑V) | 10.0 | ✓ | best coding quality (slow) |
+
+Coding metric per cell: **LCB** = LiveCodeBench v6, **SWE‑V** = SWE‑bench Verified.
+MiniMax‑M3 also tops the local 37‑question battery (97%, see above).
+
+**Role fit:**
+- **Default / agentic / tool‑use** → `gpt-oss-20b` (native tool‑use, top general accuracy, fast).
+- **Daily driver (speed + quality)** → `qwen3.6-35b-a3b` or `gemma-4-26b-a4b` (~33–36 t/s).
+- **Best coding quality** → `qwen3.6-27b` (SWE‑V 77.2) / `gemma-4-31b` (LCB 80.0) — but 10–12 t/s; for *fast* coding use `qwen3.6-35b-a3b`.
+- **Hard math / long context** → `nemotron-3-nano-30b-a3b` (AIME 89, RULER 92.9 @256k).
+- **Lightweight + vision** → `gemma-4-12b`.
+- **Defensive security** → `cyberpal-2.0-20b`.
+- **Hardest tasks / escalation** → `MiniMax-M3` (paid cloud).
+
 ## Usage
 
 ```sh
