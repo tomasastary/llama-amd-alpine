@@ -326,106 +326,90 @@ mkdir -p "${PATCH_DEST}"
 
 cat > "${PATCH_DEST}/vibe_sse_patch.sh" << 'PATCH_SH_EOF'
 #!/usr/bin/env bash
-# Re-apply the vibe SSE keep-alive fix after `uv tool upgrade mistral-vibe`.
+# Re-apply the vibe SSE keep-alive fix after `uv tool upgrade mistral-vibe`
+# (the upgrade reinstalls generic.py fresh, wiping the patch).
 #
-# Bug: vibe's stream parser in vibe/core/llm/backend/generic.py requires every
-# SSE line to contain ": " and raises
+# Bug: vibe's SSE parser in vibe/core/llm/backend/generic.py rejects llama.cpp's
+# bare ":" keep-alive comment line (sent during slow prompt-eval), raising:
 #   ValueError: Stream chunk improperly formatted. Expected `key: value`, received `:`
-# on llama.cpp's bare ":" keep-alive line (sent during slow prompt-eval on the
-#  780M rig). Fix: ignore ":"-prefixed comment lines and make the post-colon
-# space optional, per the SSE spec.
+# Fix: ignore ":"-comment lines and make the post-colon space optional (SSE spec).
 #
-# Idempotent: safe to run repeatedly. Usage: ./vibe_sse_patch.sh
+# Surgical & version-robust: rewrites only the two buggy spots, anchored on lines
+# that don't depend on the SSE iterator's name or the exact error wording — so it
+# keeps working across cosmetic vibe upgrades. Idempotent; re-run after upgrades.
 set -euo pipefail
 
-# Locate generic.py inside the installed uv tool (any python3.x).
 TOOL_ROOT="${HOME}/.local/share/uv/tools/mistral-vibe"
 FILE="$(ls "${TOOL_ROOT}"/lib/python*/site-packages/vibe/core/llm/backend/generic.py 2>/dev/null | head -n1 || true)"
-
 if [[ -z "${FILE}" || ! -f "${FILE}" ]]; then
     echo "ERROR: could not find vibe generic.py under ${TOOL_ROOT}" >&2
     echo "       Is mistral-vibe installed via 'uv tool'?" >&2
     exit 1
 fi
 echo "Target: ${FILE}"
-
 PY="$(ls "${TOOL_ROOT}"/bin/python* 2>/dev/null | head -n1 || command -v python3)"
 
-# Already patched? (our marker comment)
-if grep -q "starting with \":\" is a comment" "${FILE}"; then
-    echo "Already patched — nothing to do."
-    exit 0
-fi
-
-# Apply via Python literal string replacement (no fragile line numbers).
 "${PY}" - "${FILE}" <<'PYEOF'
-import sys, py_compile, shutil, time
+import re, sys, py_compile, shutil, time
 
 path = sys.argv[1]
 src = open(path, encoding="utf-8").read()
 
-OLD = '''            async for line in response.aiter_lines():
-                if line.strip() == "":
-                    continue
+MARKER = 'starting with ":" is a comment'
+if MARKER in src:
+    print("Already patched — nothing to do.")
+    sys.exit(0)
 
-                DELIM_CHAR = ":"
-                if f"{DELIM_CHAR} " not in line:
-                    raise ValueError(
-                        f"Stream chunk improperly formatted. "
-                        f"Expected `key{DELIM_CHAR} value`, received `{line}`"
-                    )
-                delim_index = line.find(DELIM_CHAR)
-                key = line[0:delim_index]
-                value = line[delim_index + 2 :]
+changed = 0
 
-                if key != "data":
-                    # This might be the case with openrouter, so we just ignore it
-                    continue
-                if value == "[DONE]":
-                    return
-                yield json.loads(value.strip())'''
+# (1) Replace the strict "key: value" guard + raise with: skip ":"-comment
+#     lines and skip lines with no colon. Anchored on the DELIM_CHAR guard and
+#     the delim_index line (independent of the SSE iterator's name and of the
+#     exact error-message wording), so it survives cosmetic upstream changes.
+guard_re = re.compile(
+    r'(?P<i> *)DELIM_CHAR = ":"\n'
+    r'(?P=i)if .*not in line:\n'
+    r'(?:.*\n)+?'
+    r'(?P=i)delim_index = line\.find\(DELIM_CHAR\)\n'
+)
+def guard_sub(m):
+    i = m.group("i")
+    return (
+        f'{i}# Per the SSE spec, a line starting with ":" is a comment\n'
+        f"{i}# (e.g. llama.cpp's keep-alive sent during slow prompt eval)\n"
+        f'{i}# and must be ignored.\n'
+        f'{i}if line.startswith(":"):\n'
+        f'{i}    continue\n'
+        f'{i}DELIM_CHAR = ":"\n'
+        f'{i}delim_index = line.find(DELIM_CHAR)\n'
+        f'{i}if delim_index == -1:\n'
+        f'{i}    continue\n'
+    )
+src, n = guard_re.subn(guard_sub, src, count=1)
+changed += n
 
-NEW = '''            async for line in response.aiter_lines():
-                line = line.rstrip("\\r")
-                if line.strip() == "":
-                    continue
+# (2) Fix the value slice that assumes a single space after the colon.
+slice_re = re.compile(r'(?P<i> *)value = line\[delim_index \+ 2 *:\]')
+def slice_sub(m):
+    i = m.group("i")
+    return (
+        f'{i}value = line[delim_index + 1 :]\n'
+        f'{i}if value.startswith(" "):\n'
+        f'{i}    value = value[1:]'
+    )
+src, n = slice_re.subn(slice_sub, src, count=1)
+changed += n
 
-                # Per the SSE spec, a line starting with ":" is a comment
-                # (e.g. llama.cpp's keep-alive sent during slow prompt eval)
-                # and must be ignored.
-                if line.startswith(":"):
-                    continue
-
-                DELIM_CHAR = ":"
-                delim_index = line.find(DELIM_CHAR)
-                if delim_index == -1:
-                    # Field with no value; nothing useful to parse.
-                    continue
-                key = line[0:delim_index]
-                value = line[delim_index + 1 :]
-                # The single optional space after the colon is part of the
-                # delimiter and is stripped per the SSE spec.
-                if value.startswith(" "):
-                    value = value[1:]
-
-                if key != "data":
-                    # This might be the case with openrouter, so we just ignore it
-                    continue
-                if value == "[DONE]":
-                    return
-                yield json.loads(value.strip())'''
-
-if OLD not in src:
-    print("ERROR: expected original code block not found.", file=sys.stderr)
-    print("       vibe may have changed upstream — inspect/patch manually:", file=sys.stderr)
-    print("      ", path, file=sys.stderr)
+if changed < 2:
+    print(f"ERROR: matched {changed}/2 patch sites — vibe changed upstream; "
+          f"inspect/patch manually:\n       {path}", file=sys.stderr)
     sys.exit(2)
 
 backup = path + ".orig." + time.strftime("%Y%m%d-%H%M%S")
 shutil.copy2(path, backup)
-open(path, "w", encoding="utf-8").write(src.replace(OLD, NEW, 1))
+open(path, "w", encoding="utf-8").write(src)
 py_compile.compile(path, doraise=True)
-print("Patched OK. Backup:", backup)
+print(f"Patched OK ({changed} sites). Backup: {backup}")
 PYEOF
 
 echo "Done."
@@ -433,45 +417,6 @@ PATCH_SH_EOF
 chmod +x "${PATCH_DEST}/vibe_sse_patch.sh"
 echo "Patch skript vytvorený: ${PATCH_DEST}/vibe_sse_patch.sh"
 
-cat > "${PATCH_DEST}/vibe_sse_patch.diff" << 'PATCH_DIFF_EOF'
---- a/vibe/core/llm/backend/generic.py	2026-06-10 11:07:38.639118429 +0200
-+++ b/vibe/core/llm/backend/generic.py	2026-06-10 10:58:27.671630938 +0200
-@@ -417,18 +417,27 @@
- 		await response.aread()
- 	    response.raise_for_status()
- 	    async for line in response.aiter_lines():
-+                line = line.rstrip("\r")
- 	        if line.strip() == "":
- 	            continue
- 
-+                # Per the SSE spec, a line starting with ":" is a comment
-+                # (e.g. llama.cpp's keep-alive sent during slow prompt eval)
-+                # and must be ignored.
-+                if line.startswith(":"):
-+                    continue
-+
- 	        DELIM_CHAR = ":"
--                if f"{DELIM_CHAR} " not in line:
--                    raise ValueError(
--                        f"Stream chunk improperly formatted. "
--                        f"Expected `key{DELIM_CHAR} value`, received `{line}`"
--                    )
- 	        delim_index = line.find(DELIM_CHAR)
-+                if delim_index == -1:
-+                    # Field with no value; nothing useful to parse.
-+                    continue
- 	        key = line[0:delim_index]
--                value = line[delim_index + 2 :]
-+                value = line[delim_index + 1 :]
-+                # The single optional space after the colon is part of the
-+                # delimiter and is stripped per the SSE spec.
-+                if value.startswith(" "):
-+                    value = value[1:]
- 
- 	        if key != "data":
- 	            # This might be the case with openrouter, so we just ignore it
-PATCH_DIFF_EOF
-echo "Patch diff vytvorený: ${PATCH_DEST}/vibe_sse_patch.diff"
 
 echo "Konfigurujem GRUB..."
 if ! grep -q 'ttm.pages_limit' /etc/default/grub; then
@@ -488,7 +433,6 @@ fi
 # OPTIONAL: Vibe installation & configuration
 # ============================================================================
 VIBE_PATCH_FILE="/opt/llama.cpp/vibe_sse_patch.sh"
-VIBE_DIFF_FILE="/opt/llama.cpp/vibe_sse_patch.diff"
 VIBE_CONFIG="${REAL_HOME}/.vibe/config.toml"
 
 echo ""
@@ -503,13 +447,6 @@ echo "2. APPLY SSE PATCH (fixes llama.cpp keep-alive lines):"
 if [[ -f "${VIBE_PATCH_FILE}" ]]; then
     echo "   bash ${VIBE_PATCH_FILE}"
     echo "   (Safe to re-run after 'uv tool upgrade mistral-vibe')"
-    echo ""
-    if [[ -f "${VIBE_DIFF_FILE}" ]]; then
-        echo "   Unified diff (vibe_sse_patch.diff):"
-        echo "   ----------------------------------------------------------------"
-        cat "${VIBE_DIFF_FILE}"
-        echo "   ----------------------------------------------------------------"
-    fi
     echo ""
     echo "   Shell patch script (vibe_sse_patch.sh):"
     echo "   ----------------------------------------------------------------"
